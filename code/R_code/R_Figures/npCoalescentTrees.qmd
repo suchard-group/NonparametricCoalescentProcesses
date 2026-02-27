@@ -1,0 +1,792 @@
+---
+title: "npCoalescentTrees"
+format: pdf
+---
+
+```{r, setup, include=FALSE}
+# Stable, zero-edit setup for any machine
+set.seed(666)
+options(stringsAsFactors = FALSE)
+Sys.setlocale("LC_TIME", "C")
+
+# Load small helpers without hard-coded paths
+stopifnot(requireNamespace("fs", quietly = TRUE))
+stopifnot(requireNamespace("rprojroot", quietly = TRUE))
+
+# Resolve repo root and code dir; source libraries and paths
+root <- rprojroot::find_root(
+  rprojroot::has_file(".git") |
+    rprojroot::has_dir("code")
+)
+
+# Prefer R_code/, else code/R_code/
+R_path <- fs::path(root, "code", "R_code")
+sapply(fs::path(R_path, c("R_libraries.R", "R_paths.R")), source)
+r_files <- list.files(path = R_functions_path, pattern = "\\.R$", full.names = TRUE, recursive = TRUE)
+r_files <- append(r_files, list.files(path = R_classes_path, pattern = "\\.R$", full.names = TRUE))
+for (r_file in r_files) source(r_file)
+```
+
+```{r}
+#library(scales)
+# library(colorspace)
+```
+
+
+# PRELIMINARIES
+### Parameters settings
+```{r}
+YFName <- "YF"
+muskOxName <- "muskOx"
+HivName <- "HIV"
+GP_suffix <- "_GP"
+LL_suffix <- "_LL"
+mcc_tree_suffix <- "_mcc.tree"
+save_plots = TRUE
+```
+
+### Fonts uploading
+```{r}
+loadCmuSerif()
+# library(mgcv)
+# font_add("CMU Serif", regular = "/Users/filippomonti/Library/Fonts/cmunrm.otf")
+# showtext_auto()   # automatically enables showtext for all devices
+```
+
+# General recipe
+1. standardize the covariate
+2. add a lower bound for the length
+
+# Yellow Fever
+
+```{r}
+# --- 3. Attach this data frame to your ggtree object ---
+# The '%<+%' operator from ggtree (or aplot) is specifically designed for this.
+# It merges data from `metadata_df` into the tree object based on matching `label` (tip name).
+
+```
+
+### YF tree
+<!-- npcoalescentGpYFskygridWithNewTimeSmoothingInverseGamma1_10moreOperators2 -->
+
+First annotate the tree with `TreeAnnotator`.
+```{bash}
+#XMLNAME="YF_GP"
+#cd "/Users/filippomonti/Desktop/newnpCo/output"
+#TreeAnnotator -burnin 100000 -heights mean ${XMLNAME}.trees ${XMLNAME}_mcc.tree
+#head -n 200 output_mcc.tree
+```
+
+```{r}
+# xmlName="npcoalescentGpYFskygridWithNewTimeSmoothingInverseGamma1_10moreOperators2"
+# xmlName=paste0(YFName, GP_suffix)
+# treeName <- paste0(xmlName, "_mcc.tree")
+# path_to_mcc_tree <- file.path("/Users/filippomonti/Desktop/newnpCo/output", treeName)
+# tree <- read.beast(path_to_mcc_tree)
+# phyloTree <- as.phylo(tree)
+# phyloTree$edge.length[phyloTree$edge.length < 0] <- 0
+# cat(write.tree(phyloTree), "\n")
+```
+
+Loading the tree:
+```{r}
+xmlName=paste0(YFName, GP_suffix)
+treeName <- paste0(xmlName, mcc_tree_suffix)
+path_to_mcc_tree <- file.path(input_path, treeName)
+tree <- read.nexus(path_to_mcc_tree)
+
+tip_labels <- tree$tip.label
+
+# Extract the 'Species' part (it's the 6th field when split by '|')
+metadata_df <- tibble(
+  label = tip_labels,
+  species = stringr::word(tip_labels, 6, sep = stringr::fixed("|"))
+)
+
+metadata_df <- metadata_df %>%
+  mutate(
+    host_group = ifelse(species == "Homo_sapiens", "Homo sapiens", "Other Species")
+  )
+```
+
+
+Plotting the tree with evolutionary rates:
+```{r}
+# HORIZONTAL
+tree <- read.beast(path_to_mcc_tree)
+options(ignore.negative.edge=TRUE)
+most_recent_sampling_date <- as.Date("2019-02-24") 
+mytree <- ggtree(tree, mrsd = most_recent_sampling_date, aes(color=rate)) +
+  theme_tree2() +
+    scale_color_viridis_c(
+    option = "mako",
+    direction=-1,
+    trans = "log10",
+    name = "Evolutionary Rate", # Title for the continuous legend
+    breaks = scales::breaks_pretty(n = 3)
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.01), add = c(0, 0))) +
+  scale_x_continuous(    
+    labels = function(x) x,
+    breaks = scales::breaks_pretty(n = 5), 
+    expand = expansion(mult = c(0.02, 0.01), add = c(0, 0))) +
+  theme(axis.line.x = element_blank(),
+        panel.background = element_rect(fill = NA, color = NA),
+        plot.background = element_rect(fill = NA, color = NA),
+        panel.grid.major.x = element_line(color = "grey80", linetype = "dashed")
+        ) + 
+    theme(
+    legend.position = "right",
+    legend.direction = "horizontal",
+    legend.background = element_rect(fill = "transparent"),
+    legend.title.position = "top",
+    # --- Add/Adjust these lines to control legend bar size ---
+    legend.key.width = unit(1.35, "cm"),   # Make the legend bar 2 cm wide (adjust as needed)
+    legend.key.height = unit(0.3, "cm")) # Adjust 
+  # options(ignore.negative.edge=TRUE)
+legend_rates <- get_legend(mytree)
+
+# mytree + geom_text(aes(label = node), hjust = -0.3, size = 3, color = "blue") 
+tree_with_metadata <- mytree %<+% metadata_df
+```
+
+Adding bar to specify the hosts + legend:
+```{r}
+unique_species_raw <- unique(tree_with_metadata$data$species)
+unique_species_to_group <- unique_species_raw[!is.na(unique_species_raw)]
+
+# Apply the grouping logic to these unique species to create the lookup table
+species_group_lookup <- tibble(Species = unique_species_to_group) %>%
+  mutate(
+    # Extract genus from species name (part before the first underscore)
+    Genus = case_when(
+      str_detect(Species, "_") ~ word(Species, 1, sep = fixed("_")),
+      TRUE ~ Species # If no underscore, the whole name is treated as the genus or specific category
+    ),
+    Group = case_when(
+      Species == "Homo_sapiens" ~ "Human",
+      Species == "NA" ~ "Unspecified", # This handles the literal string "NA" from your data
+      Species == "Cebidae" ~ "Neotropical\nprimate", # This is a family, not a genus
+      Genus %in% c("Alouatta", "Callithrix", "Callicebus", "Cebus", "Sapajus", "Leontopithecus") ~ "Neotropical\nprimate",
+      Genus %in% c("Haemagogus", "Aedes", "Sabethes") ~ "Mosquito",
+      TRUE ~ "Other Unclassified" # Fallback for anything not explicitly categorized
+    )
+  ) %>% dplyr::select(Species, Group) 
+
+tree_with_metadata$data <- tree_with_metadata$data %>%
+  left_join(species_group_lookup, by = c("species" = "Species")) %>%
+  rename(groupedSpecies = Group)
+
+tree_with_metadata$data <- tree_with_metadata$data %>%
+  mutate(groupedSpecies = ifelse(is.na(species) & is.na(groupedSpecies), "Unspecified", groupedSpecies))
+hostGroupDictionary <- list(
+  "Neotropical\nprimate"  = list(color = "#EB6123", letter = "B"),
+  "Human" = list(color = "#FDB338", letter = "A"), 
+  "Mosquito" = list(color = "#512888", letter = "C"),
+  "Unspecified" = list(color = "#E595B0", letter = "D") # This is a fallback color for unspecified species
+)
+host_group_colors <- sapply(hostGroupDictionary, function(x) x$color)
+
+tip_data <- tree_with_metadata$data %>%
+  filter(isTip)
+rectangle_width <- 0.3 # How 'thick' the rectangle is along the branch length axis
+rectangle_height <- 1 # How 'tall' the rectangle is along the tip-spacing axis
+# 3. Calculate the coordinates for each rectangle
+# The 'x' is branch length; The 'y' coordinates represent the tip position
+rect_coords <- tip_data %>%
+  mutate(
+    # xmin_rect: Start of the rectangle (vertically, after flip)
+    xmin_rect = max(x) + 0.15, # + ...:  gap between tree and rectangle
+    # xmax_rect: End of the rectangle (vertically, after flip)
+    xmax_rect = xmin_rect + rectangle_width,
+    # ymin_rect: Bottom of the rectangle (horizontally, after flip)
+    # We center it around the tip's y-coordinate
+    ymin_rect = y - rectangle_height / 2,
+    # ymax_rect: Top of the rectangle (horizontally, after flip)
+    ymax_rect = y + rectangle_height / 2
+  )
+
+# creating a dummy histogram to extract a legend
+a <- tree_with_metadata$data |> filter(isTip) |> dplyr::select(groupedSpecies)
+a$groupedSpecies <- factor(a$groupedSpecies, levels = c("Human", "Neotropical\nprimate", "Mosquito", "Unspecified"))
+hist_groupedSpecies <- ggplot(a) +
+  geom_bar(aes(x = groupedSpecies, fill = groupedSpecies)) +
+  scale_fill_manual(values = host_group_colors, name = "Host") +
+  labs(title = "Host Group Distribution") +
+  theme_minimal() +
+  theme(legend.position = "right", legend.title = element_text()) 
+legend_groupedSpecies <- get_legend(hist_groupedSpecies)
+# hist_groupedSpecies
+```
+
+```{r}
+plot_tree <- tree_with_metadata +
+  geom_rect(
+    data = rect_coords, # Use the calculated rectangle coordinates
+    aes(xmin = xmin_rect, xmax = xmax_rect, ymin = ymin_rect, ymax = ymax_rect, fill = groupedSpecies),
+    inherit.aes = FALSE, 
+    color = NA, linewidth = 0 # Optional: Border thickness
+  )  + theme(legend.position = "none", panel.border = element_blank()) +
+  scale_fill_manual(values = host_group_colors, name = "Host Group")
+  # xlim(NA, max(rect_coords$xmax_rect)) # Add some padding after the rectangles
+
+final_tree_plot <- addHPD_rectangles_background(plot_tree, plot_tree, nodes = c(706,734,1039,1047,707,735,765,848),
+                             width = 8)
+# x_range to set xlim in demographic plot
+x_range <- ggplot_build(final_tree_plot)$layout$panel_params[[1]]$x.range
+# Adding legends
+main_plot <- ggdraw() +
+  draw_plot(final_tree_plot + theme(panel.border = element_rect(c(0,0,0,0)))) + 
+  draw_plot(legend_groupedSpecies, x = -0.39, y = 0.18) +# width = 0.86, height = 1.1) + # x = 0.3, y = 0.2, width = 0.7, height = 1.1) map maximized
+  draw_plot(legend_rates, x = -0.265, y = 0.39)#, width = 1, height = 1) #x = -0.15, y = 0.375, width = 0.86, height = 1.1)
+main_plot 
+# g_record(main_plot,  width = 6.8, height = 4.5)
+```
+
+```{r}
+mytree_with_smaller_legend <- mytree + 
+  theme(
+    legend.title = element_text(size = 10),  # Adjust legend title font size
+    legend.text = element_text(size = 7),   # Adjust legend text font size
+    legend.key.size = unit(0.5, 'cm'),       # Adjust the size of the color keys
+    legend.key.width = unit(1.0, 'cm')
+  )
+
+# 2. Extract the legend from the modified plot
+legend_rates <- get_legend(mytree_with_smaller_legend)
+final_combined_plot <- ggdraw() +
+  draw_plot(final_tree_plot + theme(panel.border = element_rect(c(0,0,0,0)))) + 
+  draw_plot(legend_groupedSpecies, x = 0.03, y = 0.15, width = 0.3, height = 1.1) + # x = 0.3, y = 0.2, width = 0.7, height = 1.1) map maximized
+  draw_plot(legend_rates, x = 0.22, y = 0.82, width = 0.15, height = 0.2)
+  # draw_plot(legend_rates, x = 0.4, y = 0.7, width = 0.1, height = 0.005)
+# g_record(final_combined_plot,  width = 4, height = 4.5)
+```
+
+```{r}
+if (save_plots) {
+  ggsave(file = fs::path(output_figures_path, "YFOnlyTree.pdf"), 
+         final_combined_plot, width = 4, height = 4.5, dpi = 300)
+}
+```
+
+```{r}
+#mytree + geom_text(aes(label = node), hjust = -0.3, size = 3, color = "blue") 
+```
+
+```{r}
+# library(cowplot)
+# 
+# main_plot <- ggdraw() +
+#   draw_plot(background, x = 0, y = 0, width = 1, height = 1) +  # Background rectangle
+#   draw_plot(mytree2,    x = 0, y = 0, width = 1, height = 1)    # Tree on top
+# 
+# main_plot
+```
+
+### YF demographics
+```{r}
+
+jobsAttributes <- list("covariate" = "Covariate", "scale_shape" = c(1), "scale_scale" = c(1), "length_shape" = c(1), "length_scale" = c(1))
+# Dengue Rabies Hiv Mox
+if (!exists("x_range")) {x_range <- NULL}
+additionalAttributes <- list("tree" = "YF", "simulation"="off", "N0" = c(1), "curve" = "Concave",
+                             "time_range_min" = x_range[1], "time_range_max" = x_range[2])
+attributes <- append(jobsAttributes, additionalAttributes)
+
+for (r_file in r_files) source(r_file)
+# notes: the step number is too low and the length too high
+xmlName <- paste0(YFName, GP_suffix, ".log")
+# xmlName <- "npcoalescentGpYFskygridWithNewTimeSmoothingInverseGamma1_10moreOperators2"
+path_to_log <- file.path(input_path, xmlName)
+PJL <- AnalyserFromLog$new(project = "SkyGrid", path = path_to_log,
+                            jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+                          burnIn = 0.5, thinning = 10, burnOut = 1,
+                          plottingFlags = list(plottingDemographicCovariate = TRUE, 
+                                               plottingDemographic=TRUE, 
+                                               plottingDemographicGridCovariate=TRUE, 
+                                               plottingDemographicMeanCovariate = TRUE),
+                          actions = list(logPop=TRUE, publicationQuality=TRUE, useInputFile = FALSE))
+mcmcEval <- PJL$mcmc(1)
+hyper_cols <- c(grep("hyper", colnames(mcmcEval$data), value = TRUE), "gmrf.precision") #, grep("root", colnames(mcmcEval$data), value = TRUE))
+# mcmcEval$ESSSorted()
+# mcmcEval$plottingTraces(cols = 11:11)
+p <- PJL$plotter()
+# createGridAndLegend(p$plottingDemographicCovariate,
+#   title = paste("EPS", xmlName, sep = "  -  "), ncol = min(2, length(PJL$getJobsList())))
+p$plottingDemographicGridCovariate
+# p$plottingDemographicCovariate
+# p$plottingDemographicMeanCovariate
+dem_mean_covariate_YF <- p$plottingDemographicMeanCovariate$Covariate_1_1_1_1
+summary(mcmcEval$data[, hyper_cols])
+# summary(mcmcEval$data[, "bernoulliVar"])
+dem_mean_covariate_YF
+```
+
+```{r}
+if (save_plots) {
+  ggsave(
+    filename = fs::path(output_figures_path, paste0("YFDemographicCovariate", ".pdf")),
+    plot = p$plottingDemographicMeanCovariate$Covariate_1_1_1_1,
+    width = 3, height = 2.5, dpi = 300
+  )
+}
+```
+
+
+```{r}
+if (save_plots) {
+  # ggsave(
+  #   filename = fs::path(output_figures_path, paste0("YFDemographicCovariateShaded", ".pdf")),
+  #   plot = p$plottingDemographicMeanCovariate$Covariate_1_1_1_1 + theme(legend.position = c(0.08,0.84)),
+  #   width = 3, height = 2.5, dpi = 300
+  # )
+}
+```
+
+
+```{r}
+combined <- plot_grid(final_tree_plot,
+  p$plottingDemographicGridCovariate$Covariate_1_1_1_1[[1]],
+  p$plottingDemographicGridCovariate$Covariate_1_1_1_1[[2]],
+  rel_heights = c(4, 2, 2), nrow = 3, align = "v")# Align vertically
+combined
+# g_record(combined, width = 6.5, height = 6)
+```
+
+```{r}
+combinedDemography <- plot_grid(p$plottingDemographicGridCovariate$Covariate_1_1_1_1[[1]],
+  p$plottingDemographicGridCovariate$Covariate_1_1_1_1[[2]],
+  rel_heights = c(2, 2), nrow = 2, align = "v")# Align vertically
+combinedDemography
+# g_record(combinedDemography, width = 6, height = 4)
+```
+
+```{r}
+if (save_plots) {
+  ggsave(file = fs::path(output_figures_path, paste0("YFDemography", ".pdf")),
+         combinedDemography, width = 6.5, height = 4, dpi = 300)
+
+}
+```
+
+```{r}
+combineds_with_legend <- ggdraw(combined) + draw_plot(legend_groupedSpecies, x = -0.40, y = 0.28) +# width = 0.86, height = 1.1) + # x = 0.3, y = 0.2, width = 0.7, height = 1.1) map maximized
+  draw_plot(legend_rates, x = -0.315, y = 0.43) #x = -0.15, y = 0.375, width = 0.86,
+g_record(combineds_with_legend, width = 6.5, height = 6)
+```
+
+```{r}
+if (save_plots) {
+  ggsave(file =  fs::path(output_figures_path, paste0("YFTree", ".pdf")),
+         combineds_with_legend, width = 6.5, height = 6, dpi = 300)
+}
+```
+
+
+# Ancient Musk Ox
+### Mox tree
+```{r}
+#there is no 062
+# TODO we can also add the label for modern
+dictionary <- aircommunity_info <- list(
+  "Canada"  = list(letter = "D",   color = "#94CBEc"),  #9E0142
+  "Greenland" = list(letter = "C", color = "#2F67B1"), 
+  "Northeast Siberia"  = list(letter = "E", color = "#FDB338"), ##E6AB02
+  "Taimyr"  = list(letter = "A",   color = "#512888"),
+  "Urals"  = list(letter = "B",    color = "#C26A77"))
+
+ # c("#", "#","#FDB338",  "#6A4A3C", "#ff0000","#ff7400")
+ac_to_letter <- sapply(dictionary, function(x) x$letter)
+general_info_new <- setNames(
+  lapply(names(dictionary), function(name) { list(label = name, color = dictionary[[name]]$color) }),
+  sapply(dictionary, function(x) x$letter)
+)
+legend_labels <- sapply(general_info_new, function(x) x$label)
+colors_palette <- sapply(general_info_new, function(x) x$color) 
+
+categoriesVector <-c(rep("Canada", 14), rep("Greenland", 57-14), rep("Northeast Siberia", 69-57 - 1), rep("Taimyr", 123-69), rep("Urals", 149-123))
+
+categoriesVector <- ac_to_letter[categoriesVector]
+```
+
+There were 218400 trees
+<!-- npcoalescentGpMoxskygridRescaledLower03PrecisionPrior5 -->
+```{bash}
+#xmlName="muskOx_GP"
+#cd "/Users/filippomonti/Desktop/newnpCo/output"
+#nLines=$(wc -l < ${xmlName}.trees)
+#halfLines=$(( nLines / 2 ))
+#ls
+#echo $halfLines
+#TreeAnnotator -burninTrees ${halfLines} -heights median ${xmlName}.trees ${xmlName}_mcc.tree
+```
+Total trees read: 155455
+Ignoring first 77881 trees.
+Total unique clades: 531882
+<!-- npcoalescentGpMoxskygridRescaledLower03PrecisionPrior5 -->
+```{r}
+mccTreeName <- paste0(muskOxName, GP_suffix, mcc_tree_suffix)
+path_to_mcc_tree <- file.path(input_path, mccTreeName)
+tree <- read.beast(path_to_mcc_tree)
+cat("There are ", nrow(tree@data), "total nodes.\n")
+metadata_df <- tibble(labels = as.phylo(tree)$tip.label, 
+                      categories = factor(categoriesVector, levels = sort(unname(ac_to_letter))))
+
+date_bce <- ymd("0001-01-01") 
+mytree <- ggtree(tree, mrsd = date_bce, size = 0.5) + theme_tree2()  +
+ scale_x_continuous(
+    # name = "Radiocarbon years (BP)",
+    breaks = scales::breaks_pretty(n = 5),
+    labels = function(x) label_comma()(- x),
+    position = "top"
+    # expand = expansion(mult = c(0.1, 0.1))
+  ) +
+  scale_y_continuous(expand = c(0.02, 0)) +
+  theme(# axis.title.x = element_blank(),
+        # axis.text.x = element_blank(),
+        # axis.ticks.x = element_blank(),
+        axis.line.x = element_blank(),
+        panel.background = element_rect(fill = NA, color = NA),
+        plot.background = element_rect(fill = NA, color = NA),
+        panel.grid.major.x = element_line(color = "grey80", linetype = "dashed")
+        ) 
+##############
+common_min_x <- -1.5e+05
+common_max_x <- 1
+tree_with_metadata <- mytree %<+% metadata_df
+tree_with_metadata <- addHPD_rectangles_background(tree_with_metadata, tree_with_metadata,
+                                                   c(149, 150, 151, 152, 160, 217, 222, 245), width = 2)
+final_tree_plot <- tree_with_metadata + 
+  geom_tippoint(aes(color = categories), size = 1) +
+  scale_color_manual(values = colors_palette,
+                     labels = legend_labels, 
+                     name = "Locations") +
+    theme(legend.position = c(0.20, 0.75), 
+        legend.box.background = element_rect(color = NA, fill = NA), 
+        panel.border = element_rect(color = "black", fill = NA, linewidth = 1)) +
+  coord_cartesian(xlim = c(common_min_x, common_max_x))
+final_tree_plot
+```
+
+```{r}
+if (save_plots) {
+  ggsave(file = fs::path(output_figures_path, paste0("MoxTreeBigTree", ".pdf")),
+       final_tree_plot, width = 6.5, height = 4.5, dpi = 300)
+}
+#tree_with_metadata + geom_text(aes(label = node), hjust = -0.3, size = 3, color = "blue") 
+```
+
+### Mox Gp
+npcoalescentGpMoxLinVsExpOrthHigherPrec: stuck
+npcoalescentGpMoxskygridRescaledLower03PrecisionPrior5_2: stuck                        
+npcoalescentGpMoxLinear: stuck?                                                           
+npcoalescentGpMoxGlmComparison: stuck?                                                 
+  
+```{r}
+# fs::path()
+# YFVName <- "YFV"
+# muskOxName <- "muskOx"
+# HivName <- "HIV"
+# GP_suffix <- "_GP"
+# LL_suffix <- "_LL"
+# mcc_tree_suffix <- "_GP_MCC.tree"
+# path_to_log <- fs::path(input_path, paste0(dataSetName, ".log"))
+#   file.path(input_path, paste0(nameLog, ".log"))
+# PJL <- AnalyserFromLog$new(project = "SkyGrid", path = path_to_log,
+#                             jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+#                             burnIn = 0.3, thinning = 1, burnOut = 1, 
+#                             plottingFlags = list(plottingDemographicCovariate = FALSE, plottingDemographic=TRUE, plottingDemographicGridCovariate=TRUE, plottingDemographicMeanCovariate = TRUE),
+#                             actions = list(logPop=TRUE, publicationQuality=TRUE, plotGmrfMean=TRUE))
+# p <- PJL$plotter()
+```
+
+```{r}
+jobsAttributes <- list("covariate" = "Covariate", "scale_shape" = c(1),"scale_scale" = c(1), "length_shape" = c(1),"length_scale" = c(1))
+additionalAttributes <- list("tree" = "Mox", "simulation"="off", "N0" = c(1), "curve" = "Concave", 
+                              "time_range_min" = 0, "time_range_max" = 150000)
+for (r_file in r_files) source(r_file)
+
+logName <-  paste0(muskOxName, GP_suffix, ".log")
+path_to_log <- file.path(input_path, logName)
+PJL <- AnalyserFromLog$new(project = "SkyGrid", path = path_to_log,
+                          jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+                          burnIn = 0.3, thinning = 10, burnOut = 1,#11232,
+                          plottingFlags = list(plottingDemographicCovariate = TRUE, 
+                                               plottingDemographic=TRUE, 
+                                               plottingDemographicGridCovariate=TRUE, 
+                                               plottingDemographicMeanCovariate = TRUE),
+                          actions = list(logPop=TRUE, publicationQuality=TRUE, useInputFile = FALSE))
+mcmcEval <- PJL$mcmc(1)
+hyper_cols <- grep("hyper", colnames(mcmcEval$data), value = TRUE)  |> c("gmrf.precision")
+summary(mcmcEval$data[, hyper_cols])
+# summary(mcmcEval$data[, ])
+# mcmcEval$ESSSorted()
+# mcmcEval$plottingTraces(cols = 5:7)
+p <- PJL$plotter()
+# p
+# createGridAndLegend(p$plottingDemographicCovariate,
+#   title = paste("EPS", xmlName, sep = "  -  "), ncol = min(2, length(PJL$getJobsList())))
+# p$plottingDemographicCovariate
+p$plottingDemographicGridCovariate
+# p$plottingDemographicCovariate$Covariate_1_1_1_1 
+# p$plottingDemographicMeanCovariate
+dem_mean_covariate_Mox <- p$plottingDemographicMeanCovariate$Covariate_1_1_1_1 +
+  xlab(expression(delta^18 * O))
+dem_mean_covariate_Mox
+```
+
+
+```{r}
+combined <- plot_grid(final_tree_plot + theme(plot.margin = margin(5.5, 5.5, -1, 5.5)) ,
+  p$plottingDemographicGridCovariate$Covariate_1_1_1_1 + 
+    theme(plot.margin = margin(0, 5.5, 5.5, 5.5)),#, 
+          #panel.border = element_rect(color = "black", fill = NA, linewidth = 1)),
+  rel_heights = c(4, 2.5), nrow = 2, align = "v")# Align vertically)
+combined
+g_record(combined, width = 6.5, height = 6)
+```
+
+```{r}
+if (save_plots) {
+  ggsave(file = fs::path(output_figures_path, paste0("MoxTree", ".pdf")),
+       combined, width = 6.5, height = 6, dpi = 300)
+}
+```
+
+```{r}
+if (save_plots) {
+  ggsave(
+    filename =fs::path(output_figures_path, paste0("MoxDemographicCovariate", ".pdf")),
+    plot = p$plottingDemographicMeanCovariate$Covariate_1_1_1_1 + theme(plot.margin  = margin(c(5.5, 10.5, 5.5, 5.5))),
+    width = 3, height = 2.5, dpi = 300
+  )
+}
+```
+
+
+# Hiv
+```{r}
+covariate <- "0.52 0.55 0.58 0.62 0.65 0.68 0.71 0.74 0.76 0.76 0.75 0.73 0.70 0.65 0.60 0.6 0.56 0.556 0.5556 0.55556 0.555556 0.5555556 0.46 0.446 0.4446 0.36 0.336 0.3336 0.26 0.226 0.2226"
+covariate <- as.numeric(strsplit(covariate, " ")[[1]])
+covariate <- (covariate - mean(covariate) )/ sd(covariate)
+cat(covariate)
+```
+
+
+### Hiv demographics
+```{r}
+jobsAttributes <- list("covariate" = "Covariate", "scale_shape" = c(1), "scale_scale" = c(1), 
+  "length_shape" = c(1),"length_scale" = c(1))
+additionalAttributes <- list("tree" = "Hiv", "simulation"="off", "N0" = c(1), "curve" = "Concave", "smoothing" = "false")
+attributes <- append(jobsAttributes, additionalAttributes)
+for (r_file in r_files) source(r_file)
+logName <- paste0(HivName, GP_suffix, ".log")
+path_to_log <- file.path(input_path, logName)
+PJL <- AnalyserFromLog$new(project = "SkyGrid", path = path_to_log,
+                          jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+                          burnIn = 0.3, thinning = 10, burnOut = 1,#11232,
+                          plottingFlags = list(plottingDemographicCovariate = TRUE, 
+                                               plottingDemographic=TRUE, 
+                                               plottingDemographicGridCovariate=TRUE, 
+                                               plottingDemographicMeanCovariate = TRUE),
+                          actions = list(logPop=TRUE, publicationQuality=TRUE, useInputFile = FALSE))
+mcmcEval <- PJL$mcmc(1)
+hyper_cols <- c(grep("hyper", colnames(mcmcEval$data), value = TRUE), "gmrf.precision")
+summary(mcmcEval$data[, hyper_cols])
+rootHeights <- grep("root", colnames(mcmcEval$data), value = TRUE)
+summary(mcmcEval$data[, rootHeights])
+# mcmcEval$ESSSorted() |> filter(ESS != 0.0)
+mcmcEval$ESSSorted()
+# mcmcEval$plottingTraces(cols = 5)
+
+p <- PJL$plotter()
+# createGridAndLegend(p$plottingDemographicCovariate,
+#   title = paste("EPS", xmlName, sep = "  -  "), ncol = min(2, length(PJL$getJobsList())))
+p$plottingDemographicCovariate
+p$plottingDemographicGridCovariate
+p$plottingDemographicMeanCovariate
+dem_mean_covariate_Hiv <- p$plottingDemographicMeanCovariate$Covariate_1_1_1_1
+```
+
+```{r}
+# gridPoints <- "0.98 1.98 2.98 3.98 4.98 5.98 6.98 7.98 8.98 9.98 10.98 11.98 12.98 13.98 14.98 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31"
+# gridPoints <- as.numeric(strsplit(gridPoints, " ")[[1]])
+# gmrf.means <- mcmcEval$data[, grep("gmrf.mean", colnames(mcmcEval$data), value = TRUE)] |> apply(2, median) 
+# cov <- mcmcEval$data[, grep("cov", colnames(mcmcEval$data), value = TRUE)] |> apply(2, median) 
+# logPop <- mcmcEval$data[, grep("PopSize", colnames(mcmcEval$data), value = TRUE)] |> log() |> apply(2, median)
+# 
+# plot(gridPoints, gmrf.means)
+# plot(gridPoints, cov)
+# plot(gridPoints, logPop)
+```
+
+
+```{r}
+g_record(p$plottingDemographicMeanCovariate$Covariate_1_1_1_1,  width = 3, height = 2.5)
+if (save_plots) {
+  ggsave(
+    filename = fs::path(output_figures_path, paste0("HivDemographicCovariate", ".pdf")),
+    plot = p$plottingDemographicMeanCovariate$Covariate_1_1_1_1,
+    width = 3, height = 2.5, dpi = 300
+  )
+}
+
+```
+
+```{r}
+g_record(p$plottingDemographicGridCovariate$Covariate_1_1_1_1,  width = 6.5, height = 2)
+if (save_plots) {
+  ggsave(
+    filename =fs::path(output_figures_path, paste0("HivDemographicCovariateGrid", ".pdf")),
+    plot = p$plottingDemographicGridCovariate$Covariate_1_1_1_1,
+    width = 6.5, height = 2, dpi = 300
+  )
+}
+```
+
+```{r}
+# ggsave(
+#   filename = paste0(output_figures_path, "HivDemographicCovariateGrid", ".pdf"),
+#   plot = p$plottingDemographicGridCovariate$Covariate_1_1_1_1,
+#   width = 3, height = 2.5, dpi = 300
+# )
+```
+
+# MERGED eps vs covariate plots
+```{r}
+# 1. Add a title and center it for each individual plot object
+
+dem_mean_covariate_YF_titled <- dem_mean_covariate_YF +
+  labs(title = "(a) Yellow Fever") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+dem_mean_covariate_Mox_titled <- dem_mean_covariate_Mox +
+  labs(title = "(b) Ancient Musk Ox") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+dem_mean_covariate_Hiv_titled <- dem_mean_covariate_Hiv +
+  labs(title = "(c) Hiv") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# 2. Combine the titled and centered plots using plot_grid()
+combined <- plot_grid(
+  dem_mean_covariate_YF_titled + theme(plot.margin = margin(c(5.5, 5.5, 10.5, 5.5))),
+  dem_mean_covariate_Mox_titled + theme(axis.title.y = element_blank(), plot.margin = margin(c(5.5, 10.5, 5.5, -5))),
+  dem_mean_covariate_Hiv_titled + theme(axis.title.y = element_blank(), plot.margin = margin(c(5.5, 2, 10.5, -10))),
+  nrow = 1, ncol = 3, align = "h", rel_widths = c(1.2, 1.02, 1)
+)
+
+mylegend <- get_legend(p$plottingDemographicCovariate$Covariate_1_1_1_1 + theme(legend.position = "right", legend.background = element_rect(fill = "transparent", color = NA)) +
+  guides(color = guide_legend(nrow = 1)))
+final_plot <- plot_grid(combined, mylegend, ncol = 1, rel_heights = c(1, 0.05))
+final_plot
+g_record(final_plot,  width = 6.5, height = 2.8)
+```
+
+```{r}
+if (save_plots) {
+  ggsave(
+    filename = fs::path(output_figures_path, paste0("logRatesVsCovariatesPlot", ".pdf")),
+    plot = final_plot,
+    width = 6.5, height = 2.8, dpi = 300
+  )
+}
+
+```
+
+```{r}
+# mylegend <- get_legend(p$plottingDemographicCovariate$Covariate_1_1_1_1 + theme(legend.position = "right", legend.background = element_rect(fill = "transparent", color = NA)) +
+#   guides(color = guide_legend(nrow = 1)))
+# combined <- plot_grid(dem_mean_covariate_YF + theme(plot.margin = margin(c(5.5, 5.5, 10.5, 5.5))),
+#  dem_mean_covariate_Mox + theme(axis.title.y = element_blank(), plot.margin = margin(c(5.5, 10.5, 5.5, -5))),
+#  dem_mean_covariate_Hiv + theme(axis.title.y = element_blank(), plot.margin = margin(c(5.5, 2, 10.5, -5))),
+#   nrow = 1, ncol = 3, align = "h")# Align vertically)
+# combined
+# g_record(combined, width = 6.5, height = 2.5)
+```
+
+```{r}
+# ggdraw(plot_grid(final_plot,
+#                  plot_grid(NULL, legend, ncol=1),
+#                  rel_widths=c(1, 0.1)))
+```
+
+
+# Simulations
+
+```{r}
+jobsAttributes <- list("covariate" = "Temperature", "scale_shape" = c(1),
+                       "scale_scale" = c(1), "length_shape" = c(1), "length_scale" = c(1))
+
+for (curve in c("Linear", "Concave")) {
+  additionalAttributes <- list("tree" = "YF", "N0" = c(1), simulation = "on", curve=curve, 
+                               "time_range_min" = 0, "time_range_max" = 14)
+  nameLog <- paste0("simulation_GP_", curve)
+   # if (additionalAttributes$curve == "Linear") {
+   #   print("Linear")
+   #    nameLog <- "npcoalescentRSimulation250TemperatureLinearGmrfGp1"#Actual3 # 3
+   #  } else if (additionalAttributes$curve == "Concave") {
+   #    print("Concave")
+   #    
+   #    # nameLog <- "npcoalescentRSimulation250TemperatureConcaveGmrfGpRescaler"
+   #    # nameLog <- "npcoalescentRSimulation250TemperatureConcaveGmrfGp4"#Actual3 # 3
+   #  }
+  for (r_file in r_files) source(r_file)
+  
+  path_to_log <- file.path(input_path, paste0(nameLog, ".log"))
+  PJL <- AnalyserFromLog$new(project = "SkyGrid", path = path_to_log,
+                            jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+                            burnIn = 0.3, thinning = 1, burnOut = 1, 
+                            plottingFlags = list(plottingDemographicCovariate = FALSE, plottingDemographic=TRUE, plottingDemographicGridCovariate=TRUE, plottingDemographicMeanCovariate = TRUE),
+                            actions = list(logPop=TRUE, publicationQuality=TRUE, plotGmrfMean=TRUE))
+  p <- PJL$plotter()
+  mcmcEval <- PJL$mcmc(1)
+    if (additionalAttributes$curve == "Linear") {
+    plotDemoCovariatesLinear <- p$plottingDemographicMeanCovariate[[1]]
+    gp_Linear_Simul <- mcmcEval$getData() |> dplyr::select(starts_with("PopSize"))
+  } else if (additionalAttributes$curve == "Concave") {
+    plotDemoCovariatesConcave <- p$plottingDemographicMeanCovariate[[1]]
+    gp_Concave_Simul <- mcmcEval$getData() |> dplyr::select(starts_with("PopSize"))
+  }
+  cat(curve, ": ", mcmcEval$ESSSorted()$ESS[mcmcEval$ESSSorted()$ESS>0] |> min(), "\n")
+}
+```
+```{r}
+mcmcEval$ESSSorted()
+```
+
+
+```{r}
+# 1. Add a title and center it for each individual plot object
+simulLinear <- plotDemoCovariatesLinear +
+  labs(title = "(a) Linear", x = "Covariate") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+simulConcave <- plotDemoCovariatesConcave +
+  labs(title = "(b) Concave", x = "Covariate") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# 2. Combine the titled and centered plots using plot_grid()
+combined <- plot_grid(
+  simulLinear + theme(plot.margin = margin(c(5.5, 5.5, 10.5, 5.5))),
+  simulConcave + theme(axis.title.y = element_blank(), plot.margin = margin(c(5.5, 10.5, 5.5, -5))),
+  nrow = 1, ncol = 2, align = "h", rel_widths = c(1.1, 1)
+)
+
+mylegend <- get_legend(plotDemoCovariatesLinear + theme(legend.position = "right", 
+                                                        legend.background = element_rect(fill = "transparent", color = NA),
+                                                        legend.title = element_blank()) +
+  guides(color = guide_legend(nrow = 1)))
+final_plot_simulations <- plot_grid(combined, mylegend, ncol = 1, rel_heights = c(1, 0.1))
+final_plot_simulations
+g_record(final_plot_simulations,  width = 4, height = 2.5)
+```
+
+```{r}
+if (save_plots) {
+  ggsave(file = fs::path(output_figures_path,  "simulations.pdf"), 
+         final_plot_simulations, width = 4, height = 2.5, dpi = 300)
+}
+```
+
+
