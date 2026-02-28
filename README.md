@@ -170,12 +170,12 @@ Generate log files for the **Gaussian process** model applied in the context of 
     java -Djava.library.path=/usr/local/lib \
       -jar /path/to/beast-mcmc/build/dist/beast.jar \
       -seed 666 -overwrite \
-      .../code/xml/simulation_GP_Linear.xml
+      .../code/xml/simulation/simulation_GP_linear.xml
 
     java -Djava.library.path=/usr/local/lib \
       -jar /path/to/beast-mcmc/build/dist/beast.jar \
       -seed 666 -overwrite \
-      .../code/xml/simulation_GP_Concave.xml
+      .../code/xml/simulation/simulation_GP_concave.xml
 
 ---
 
@@ -186,14 +186,14 @@ Generate log files for the **Gaussian process** model applied in the context of 
     java -Djava.library.path=/usr/local/lib \
       -jar /path/to/beast-mcmc/build/dist/beast.jar \
       -seed 666 -overwrite \
-      .../code/xml/YF_LL.xml
+      .../code/xml/YF/YF_LL.xml
 
 **Gaussian Process Model**
 
     java -Djava.library.path=/usr/local/lib \
       -jar /path/to/beast-mcmc/build/dist/beast.jar \
       -seed 666 -overwrite \
-      .../code/xml/YF_GP.xml
+      .../code/xml/YF/YF_GP.xml
 
 ---
 
@@ -204,14 +204,14 @@ Generate log files for the **Gaussian process** model applied in the context of 
     java -Djava.library.path=/usr/local/lib \
       -jar /path/to/beast-mcmc/build/dist/beast.jar \
       -seed 666 -overwrite \
-      .../code/xml/muskOx_LL.xml
+      .../code/xml/muskOx/muskOx_LL.xml
 
 **Gaussian Process Model**
 
     java -Djava.library.path=/usr/local/lib \
       -jar /path/to/beast-mcmc/build/dist/beast.jar \
       -seed 666 -overwrite \
-      .../code/xml/muskOx_GP.xml
+      .../code/xml/muskOx/muskOx_GP.xml
 
 ---
 
@@ -222,14 +222,14 @@ Generate log files for the **Gaussian process** model applied in the context of 
     java -Djava.library.path=/usr/local/lib \
       -jar /path/to/beast-mcmc/build/dist/beast.jar \
       -seed 666 -overwrite \
-      .../code/xml/HIV_LL.xml
+      .../code/xml/HIV/HIV_LL.xml
 
 **Gaussian Process Model**
 
     java -Djava.library.path=/usr/local/lib \
       -jar /path/to/beast-mcmc/build/dist/beast.jar \
       -seed 666 -overwrite \
-      .../code/xml/HIV_GP.xml
+      .../code/xml/HIV/HIV_GP.xml
 
 ---
 
